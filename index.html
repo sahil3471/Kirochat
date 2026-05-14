@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0f172a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Dartmouth Eats" />
+<title>Dartmouth Eats Tracker</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <h1>Dartmouth Eats</h1>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="now" role="tab">Now</button>
+    <button class="tab" data-tab="log" role="tab">Log</button>
+    <button class="tab" data-tab="stats" role="tab">Stats</button>
+    <button class="tab" data-tab="plan" role="tab">Plan</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ============== NOW TAB ============== -->
+  <section id="tab-now" class="tab-panel active">
+    <div class="card hero">
+      <div class="hero-time" id="nowTime">--:--</div>
+      <div class="hero-day" id="nowDay">—</div>
+    </div>
+
+    <div class="card recommend" id="recommendCard">
+      <div class="rec-label">Where to be right now</div>
+      <div class="rec-zone" id="recZone">—</div>
+      <div class="rec-why" id="recWhy">—</div>
+      <div class="rec-window" id="recWindow"></div>
+    </div>
+
+    <div class="card next-up">
+      <div class="section-title">Next window</div>
+      <div class="next-row">
+        <span id="nextWhen">—</span>
+        <span id="nextZone" class="muted">—</span>
+      </div>
+    </div>
+
+    <div class="card quick">
+      <div class="section-title">Quick log this delivery</div>
+      <button id="quickLogBtn" class="btn primary big">+ Log delivery</button>
+    </div>
+  </section>
+
+  <!-- ============== LOG TAB ============== -->
+  <section id="tab-log" class="tab-panel">
+    <form id="logForm" class="card form">
+      <div class="form-row">
+        <label>Zone
+          <select id="fZone" required></select>
+        </label>
+        <label>Restaurant
+          <input id="fRestaurant" list="restaurantList" placeholder="e.g. Boston Pizza" />
+          <datalist id="restaurantList"></datalist>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Pay ($)
+          <input id="fPay" type="number" step="0.01" min="0" required inputmode="decimal" />
+        </label>
+        <label>Tip ($)
+          <input id="fTip" type="number" step="0.01" min="0" inputmode="decimal" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Distance (km)
+          <input id="fKm" type="number" step="0.1" min="0" required inputmode="decimal" />
+        </label>
+        <label>Total time (min)
+          <input id="fMin" type="number" step="1" min="1" required inputmode="numeric" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Wait at restaurant (min)
+          <input id="fWait" type="number" step="1" min="0" inputmode="numeric" />
+        </label>
+        <label>App
+          <select id="fApp">
+            <option>Uber Eats</option>
+            <option>DoorDash</option>
+            <option>SkipTheDishes</option>
+            <option>Other</option>
+          </select>
+        </label>
+      </div>
+      <label>Notes
+        <input id="fNotes" type="text" placeholder="Slow prep, bridge crossing, big tip..." />
+      </label>
+      <button type="submit" class="btn primary big">Save delivery</button>
+    </form>
+
+    <div class="card">
+      <div class="section-title row-between">
+        <span>Recent deliveries</span>
+        <button id="exportBtn" class="btn small">Export CSV</button>
+      </div>
+      <ul id="historyList" class="history"></ul>
+      <div class="row-between mt">
+        <button id="clearBtn" class="btn danger small">Clear all</button>
+        <span id="historyCount" class="muted small">0 entries</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== STATS TAB ============== -->
+  <section id="tab-stats" class="tab-panel">
+    <div class="card">
+      <div class="section-title">Filter</div>
+      <div class="form-row">
+        <label>Range
+          <select id="statRange">
+            <option value="today">Today</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="all">All time</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="stat-card"><span class="stat-num" id="sCount">0</span><span class="stat-label">Deliveries</span></div>
+      <div class="stat-card"><span class="stat-num" id="sEarn">$0</span><span class="stat-label">Earnings</span></div>
+      <div class="stat-card"><span class="stat-num" id="sPerHr">$0</span><span class="stat-label">/ hour</span></div>
+      <div class="stat-card"><span class="stat-num" id="sPerKm">$0</span><span class="stat-label">/ km</span></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Best zones</div>
+      <ul id="bestZones" class="rank"></ul>
+    </div>
+    <div class="card">
+      <div class="section-title">Best restaurants ($/hr)</div>
+      <ul id="bestRestaurants" class="rank"></ul>
+    </div>
+    <div class="card">
+      <div class="section-title">Worst restaurants (avoid)</div>
+      <ul id="worstRestaurants" class="rank"></ul>
+    </div>
+    <div class="card">
+      <div class="section-title">Best hours of the day</div>
+      <ul id="bestHours" class="rank"></ul>
+    </div>
+  </section>
+
+  <!-- ============== PLAN TAB ============== -->
+  <section id="tab-plan" class="tab-panel">
+    <div class="card">
+      <div class="section-title">Dartmouth playbook (6am – midnight)</div>
+      <p class="muted small">Tap a row to see the full reasoning. The "Now" tab uses this to recommend your spot in real time.</p>
+    </div>
+    <div id="planList"></div>
+    <div class="card">
+      <div class="section-title">Top earning windows</div>
+      <ol class="num-list">
+        <li>Friday 5:30pm – 9:30pm</li>
+        <li>Saturday 5:00pm – 10:00pm</li>
+        <li>Sunday 5:00pm – 9:00pm</li>
+        <li>Friday lunch (Burnside)</li>
+        <li>Bad-weather weekday evenings — anytime it's snowing or pouring, get online</li>
+      </ol>
+    </div>
+    <div class="card">
+      <div class="section-title">Hard rules</div>
+      <ul class="bullet">
+        <li>Decline bridge orders under ~$8 — toll &amp; deadhead kill $/km.</li>
+        <li>Decline Eastern Passage / Cow Bay drops under ~$10 — long return.</li>
+        <li>Don't go offline between orders. Cruise slowly to keep motion-sensor signal live.</li>
+        <li>Multi-app (Uber Eats + DoorDash + Skip). Pause others when you accept.</li>
+        <li>Acceptance rate doesn't gate pings — be picky on $/km.</li>
+        <li>Storms = highest $/hr of the year. Get online.</li>
+      </ul>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="playbook.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
