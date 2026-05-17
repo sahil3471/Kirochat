@@ -11,10 +11,29 @@ Works offline once installed. All data stays on your phone (localStorage).
 
 - **Now** tab — clock + live recommendation of which Dartmouth zone to be in.
 - **Log** tab — quick form to capture pay, tip, distance, time, restaurant.
-- **Stats** tab — earnings, $/hr, $/km, best zones, best & worst restaurants,
-  best hours of the day. Filter by today / 7 days / 30 days / all time.
-- **Plan** tab — the full Dartmouth playbook with rules and top earning windows.
+- **Stats** tab — earnings, $/hr, $/km, best zones (by day of week), best &amp;
+  worst restaurants, best hour by day. Filter by today / 7 days / 30 days /
+  all time. The "Best zones" and "Best hour" cards highlight the top pick for
+  the current day-of-week + time slot at the top.
+- **Plan** tab — fully data-driven. Shows the best zone right now, today's
+  per-2-hour-slot plan, and the best slot for each day of the week, all
+  computed from your own logged deliveries.
 - **Export CSV** — pull all your logged deliveries into a spreadsheet.
+
+## How "best zone" is computed
+
+Every delivery is bucketed into a `(day-of-week, 2-hour window, zone)` tuple.
+For each bucket we sum total earnings (pay + tip) and total minutes, then
+compute `$/hr = earn / (min / 60)`.
+
+When asked for the "best" zone for a given slot, we:
+
+1. Filter to buckets in that day &amp; time window.
+2. Prefer buckets with at least 2 deliveries (so a single big tip doesn't
+   skew the answer).
+3. Pick the highest `$/hr` among those.
+4. If no bucket has 2+ deliveries yet, fall back to the highest total
+   earnings so the user still sees something useful.
 
 ## Hosting (free)
 

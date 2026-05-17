@@ -1,5 +1,5 @@
 /* Simple offline-first service worker for the Dartmouth Eats Tracker. */
-const CACHE = "dartmouth-eats-v1";
+const CACHE = "dartmouth-eats-v2";
 const ASSETS = [
   "./",
   "./index.html",
