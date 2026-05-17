@@ -216,6 +216,14 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 .rank .name { font-weight: 600; }
 .rank .val { color: var(--accent); font-weight: 700; }
 .rank .sub { color: var(--muted); font-size: 12px; }
+.rank li.now {
+  background: linear-gradient(135deg, #20304f 0%, #2a3d65 100%);
+  border: 1px solid #3a527e;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.rank li.now .name { color: var(--accent); }
 
 /* Plan list */
 .plan-row {

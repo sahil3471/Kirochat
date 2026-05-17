@@ -39,7 +39,6 @@ function decimalHour(d) { return d.getHours() + d.getMinutes() / 60; }
 function findCurrentWindow(now) {
   const dh = decimalHour(now);
   const dow = now.getDay();
-  // Find the most specific match: prefer entries whose dow includes today
   return PLAYBOOK.find(p =>
     dh >= p.start && dh < p.end && (p.dow === null || p.dow.includes(dow))
   );
@@ -48,12 +47,10 @@ function findCurrentWindow(now) {
 function findNextWindow(now) {
   const dh = decimalHour(now);
   const dow = now.getDay();
-  // Look ahead through today only (simple heuristic)
   const today = PLAYBOOK
     .filter(p => p.start > dh && (p.dow === null || p.dow.includes(dow)))
     .sort((a, b) => a.start - b.start);
   if (today.length) return today[0];
-  // Otherwise first window of tomorrow
   const tomDow = (dow + 1) % 7;
   const tom = PLAYBOOK
     .filter(p => p.dow === null || p.dow.includes(tomDow))
@@ -96,32 +93,194 @@ function renderNow() {
   }
 }
 
+/* ---------- Day-of-week / time-window helpers ---------- */
+const DAY_FULL  = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const DAY_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+// Mon-first ordering for display (1,2,3,4,5,6,0)
+const DAY_DISPLAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+// Time-window size used for bucketing deliveries.
+// 2 hours = 12 windows per day (0-2, 2-4, ..., 22-24).
+const WINDOW_SIZE_HOURS = 2;
+// A bucket needs at least this many deliveries before its $/hr is trusted.
+// With <2 we fall back to total $ earned so the user still sees *something*.
+const MIN_ORDERS_FOR_CONFIDENCE = 2;
+
+function windowStartFor(hour) {
+  return Math.floor(hour / WINDOW_SIZE_HOURS) * WINDOW_SIZE_HOURS;
+}
+
+function fmtHour12(h) {
+  h = ((h % 24) + 24) % 24;
+  if (h === 0)  return "12 AM";
+  if (h === 12) return "12 PM";
+  if (h < 12)   return `${h} AM`;
+  return `${h - 12} PM`;
+}
+
+function fmtWindowRange(startH) {
+  return `${fmtHour12(startH)} – ${fmtHour12(startH + WINDOW_SIZE_HOURS)}`;
+}
+
+/* ---------- Bucketing & ranking ---------- */
+/* Group deliveries into (day-of-week, time-window, zone) buckets and compute
+ * earn / minutes / $/hr per bucket. */
+function bucketizeByZone(log) {
+  const buckets = {};
+  log.forEach(e => {
+    const d = new Date(e.ts);
+    const dow = d.getDay();
+    const ws  = windowStartFor(decimalHour(d));
+    const zone = e.zone || "Unknown";
+    const key = `${dow}|${ws}|${zone}`;
+    const o = buckets[key] || (buckets[key] = {
+      dow, ws, zone, earn: 0, min: 0, count: 0
+    });
+    o.earn += (e.pay || 0) + (e.tip || 0);
+    o.min  += e.min || 0;
+    o.count++;
+  });
+  Object.values(buckets).forEach(b => {
+    b.perHr = b.min > 0 ? b.earn / (b.min / 60) : 0;
+  });
+  return Object.values(buckets);
+}
+
+/* Group deliveries into (day-of-week, hour-of-day) buckets. */
+function bucketizeByHour(log) {
+  const buckets = {};
+  log.forEach(e => {
+    const d = new Date(e.ts);
+    const dow = d.getDay();
+    const h = d.getHours();
+    const key = `${dow}|${h}`;
+    const o = buckets[key] || (buckets[key] = {
+      dow, hour: h, earn: 0, min: 0, count: 0
+    });
+    o.earn += (e.pay || 0) + (e.tip || 0);
+    o.min  += e.min || 0;
+    o.count++;
+  });
+  Object.values(buckets).forEach(b => {
+    b.perHr = b.min > 0 ? b.earn / (b.min / 60) : 0;
+  });
+  return Object.values(buckets);
+}
+
+/* Pick the highest-$/hr bucket from a candidate list, requiring 2+ orders
+ * for confidence. If no bucket has 2+ orders, fall back to highest total $
+ * (so a user with little data still gets a recommendation). */
+function pickBest(buckets) {
+  if (!buckets.length) return null;
+  const confident = buckets.filter(b => b.count >= MIN_ORDERS_FOR_CONFIDENCE);
+  const list = confident.length ? confident : buckets;
+  return list.slice().sort((a, b) =>
+    (b.perHr - a.perHr) || (b.earn - a.earn) || (b.count - a.count)
+  )[0];
+}
+
 /* ---------- Plan tab ---------- */
 function renderPlan() {
-  const list = document.getElementById("planList");
-  list.innerHTML = "";
-  const now = new Date();
-  const dh = decimalHour(now);
-  const dow = now.getDay();
+  renderDynamicPlan();
+}
 
-  PLAYBOOK.forEach((p, i) => {
-    const row = document.createElement("div");
-    row.className = "plan-row";
-    const isNow = dh >= p.start && dh < p.end && (p.dow === null || p.dow.includes(dow));
-    if (isNow) row.classList.add("active");
-    const dowLabel = p.dow === null
-      ? "Every day"
-      : p.dow.length === 7 ? "Every day"
-      : p.dow.map(d => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d]).join(", ");
-    row.innerHTML = `
-      <div class="plan-time">${fmtWindow(p)} · ${dowLabel}</div>
-      <div class="plan-zone">${p.zone}</div>
-      <div class="plan-why">${p.why}</div>
-      <div class="plan-detail">${p.detail}</div>
-    `;
-    row.addEventListener("click", () => row.classList.toggle("open"));
-    list.appendChild(row);
+/* The Plan tab is fully data-driven. It reads ALL logged deliveries and shows:
+ *   1. Right now — the best zone for the current day-of-week + time window.
+ *   2. Today's plan — best zone for each 2-hour slot of today (6 AM – 12 AM).
+ *   3. Best slot by day of week — single best (window, zone) pick per day. */
+function renderDynamicPlan() {
+  const wrap = document.getElementById("dynamicPlan");
+  if (!wrap) return;
+
+  const log = loadLog();
+  const zoneBuckets = bucketizeByZone(log);
+
+  const now    = new Date();
+  const curDow = now.getDay();
+  const curWs  = windowStartFor(decimalHour(now));
+
+  // 1. Right now
+  const nowCandidates = zoneBuckets.filter(b => b.dow === curDow && b.ws === curWs);
+  const nowBest = pickBest(nowCandidates);
+
+  // 2. Today's plan — every 2h slot from 6 AM to midnight.
+  const todayWindows = [];
+  for (let h = 6; h < 24; h += WINDOW_SIZE_HOURS) {
+    const candidates = zoneBuckets.filter(b => b.dow === curDow && b.ws === h);
+    todayWindows.push({ ws: h, best: pickBest(candidates) });
+  }
+
+  // 3. Weekly outlook — best (window, zone) pick per day-of-week.
+  const weekly = DAY_DISPLAY_ORDER.map(dow => ({
+    dow,
+    best: pickBest(zoneBuckets.filter(b => b.dow === dow))
+  }));
+
+  // ----- render -----
+  let html = "";
+
+  // Right-now hero card
+  html += `
+    <div class="card recommend">
+      <div class="rec-label">Right now · ${DAY_FULL[curDow]} ${fmtWindowRange(curWs)}</div>`;
+  if (nowBest) {
+    html += `
+      <div class="rec-zone">${escapeHtml(nowBest.zone)}</div>
+      <div class="rec-why">$${nowBest.perHr.toFixed(0)}/hr based on ${nowBest.count} past delivery${nowBest.count===1?"":"s"} · $${nowBest.earn.toFixed(0)} total earned</div>`;
+  } else {
+    html += `
+      <div class="rec-zone">No data yet</div>
+      <div class="rec-why">Log a few deliveries during this slot and your zone recommendation will show up here.</div>`;
+  }
+  html += `</div>`;
+
+  // Today's plan card
+  html += `
+    <div class="card">
+      <div class="section-title">${DAY_FULL[curDow]}'s plan</div>
+      <p class="muted small">Best zone for each 2-hour slot, based on every delivery you've ever logged on a ${DAY_FULL[curDow]}.</p>`;
+  todayWindows.forEach(w => {
+    const isCurrent = w.ws === curWs;
+    if (w.best) {
+      html += `
+        <div class="plan-row${isCurrent ? " active" : ""}">
+          <div class="plan-time">${fmtWindowRange(w.ws)}${isCurrent ? " · now" : ""}</div>
+          <div class="plan-zone">${escapeHtml(w.best.zone)}</div>
+          <div class="plan-why">$${w.best.perHr.toFixed(0)}/hr · $${w.best.earn.toFixed(0)} earned · ${w.best.count} order${w.best.count===1?"":"s"}</div>
+        </div>`;
+    } else {
+      html += `
+        <div class="plan-row${isCurrent ? " active" : ""}">
+          <div class="plan-time">${fmtWindowRange(w.ws)}${isCurrent ? " · now" : ""}</div>
+          <div class="plan-zone muted">— no data yet —</div>
+        </div>`;
+    }
   });
+  html += `</div>`;
+
+  // Weekly outlook
+  html += `
+    <div class="card">
+      <div class="section-title">Best slot by day of week</div>
+      <p class="muted small">Single highest-$/hr (window, zone) pick for each day, all-time.</p>`;
+  weekly.forEach(({ dow, best }) => {
+    if (best) {
+      html += `
+        <div class="plan-row${dow === curDow ? " active" : ""}">
+          <div class="plan-time">${DAY_FULL[dow]} · ${fmtWindowRange(best.ws)}</div>
+          <div class="plan-zone">${escapeHtml(best.zone)}</div>
+          <div class="plan-why">$${best.perHr.toFixed(0)}/hr · $${best.earn.toFixed(0)} earned · ${best.count} order${best.count===1?"":"s"}</div>
+        </div>`;
+    } else {
+      html += `
+        <div class="plan-row">
+          <div class="plan-time">${DAY_FULL[dow]}</div>
+          <div class="plan-zone muted">— no data yet —</div>
+        </div>`;
+    }
+  });
+  html += `</div>`;
+
+  wrap.innerHTML = html;
 }
 
 /* ---------- Log tab ---------- */
@@ -136,7 +295,6 @@ function suggestedZone() {
   const now = new Date();
   const cur = findCurrentWindow(now);
   if (!cur) return "Other";
-  // Map zone description to a value in ZONES
   const z = cur.zone;
   if (/Burnside/i.test(z)) return "Burnside";
   if (/Crossing/i.test(z)) return "Dartmouth Crossing";
@@ -259,40 +417,158 @@ function renderStats() {
   document.getElementById("sPerKm").textContent =
     totalKm > 0 ? "$" + (totalEarn / totalKm).toFixed(2) : "$0";
 
-  // Best zones (sum)
-  const byZone = aggregate(log, "zone");
-  const byRest = aggregate(log, "restaurant");
+  // Best zones — "right now" highlight + per-day breakdown.
+  renderBestZonesByDay(log);
 
-  renderRank("bestZones", topByPerHr(byZone), "$/hr");
+  // Best restaurants / worst restaurants stay aggregated overall.
+  const byRest = aggregate(log, "restaurant");
   renderRank("bestRestaurants", topByPerHr(byRest), "$/hr");
   renderRank("worstRestaurants",
     topByPerHr(byRest).filter(r => r.count >= 2).slice().reverse().slice(0, 5),
     "$/hr");
 
-  // Best hours of day
-  const byHour = {};
-  log.forEach(e => {
-    const h = new Date(e.ts).getHours();
-    byHour[h] = byHour[h] || { name: hourLabel(h), earn: 0, min: 0, count: 0 };
-    byHour[h].earn += e.pay + e.tip;
-    byHour[h].min  += e.min;
-    byHour[h].count++;
+  // Best hour by day — "right now" highlight + per-day breakdown.
+  renderBestHoursByDay(log);
+}
+
+/* "Best zones by day" card.
+ * - Top row (highlighted): best zone for the current day-of-week + current 2h
+ *   window. This is the "where should I be RIGHT NOW" answer.
+ * - Below: 7 rows, one per day of week, each showing the best (window, zone)
+ *   pick for that day overall. */
+function renderBestZonesByDay(log) {
+  const buckets = bucketizeByZone(log);
+
+  const now    = new Date();
+  const curDow = now.getDay();
+  const curWs  = windowStartFor(decimalHour(now));
+
+  // Right-now slot
+  const nowBest = pickBest(buckets.filter(b => b.dow === curDow && b.ws === curWs));
+
+  // Best per day of week
+  const perDayBest = {};
+  DAY_DISPLAY_ORDER.forEach(dow => {
+    const best = pickBest(buckets.filter(b => b.dow === dow));
+    if (best) perDayBest[dow] = best;
   });
-  const hoursList = Object.values(byHour).map(o => ({
-    name: o.name,
-    perHr: o.min > 0 ? o.earn / (o.min / 60) : 0,
-    count: o.count,
-    earn: o.earn,
-    min: o.min
-  })).filter(o => o.count >= 1).sort((a,b) => b.perHr - a.perHr).slice(0, 6);
-  renderRank("bestHours", hoursList, "$/hr");
+
+  const ul = document.getElementById("bestZones");
+  ul.innerHTML = "";
+
+  // Highlighted "right now" row
+  ul.appendChild(buildNowLi({
+    title: `Right now · ${DAY_SHORT[curDow]} ${fmtWindowRange(curWs)}`,
+    bucket: nowBest,
+    detailsForBucket: b => `${escapeHtml(b.zone)} · ${b.count} order${b.count===1?"":"s"} · $${b.earn.toFixed(0)} total`,
+    emptyMsg: "No data yet for this slot — log a few deliveries."
+  }));
+
+  // Per-day rows
+  DAY_DISPLAY_ORDER.forEach(dow => {
+    const o = perDayBest[dow];
+    const li = document.createElement("li");
+    if (o) {
+      li.innerHTML = `
+        <div>
+          <div class="name">${DAY_SHORT[dow]} · ${fmtWindowRange(o.ws)} · ${escapeHtml(o.zone)}</div>
+          <div class="sub">${o.count} order${o.count===1?"":"s"} · $${o.earn.toFixed(0)} total</div>
+        </div>
+        <div class="val">$${o.perHr.toFixed(0)} $/hr</div>
+      `;
+    } else {
+      li.innerHTML = `
+        <div>
+          <div class="name">${DAY_SHORT[dow]}</div>
+          <div class="sub muted">No data yet.</div>
+        </div>
+        <div class="val muted">—</div>
+      `;
+    }
+    ul.appendChild(li);
+  });
 }
 
-function hourLabel(h) {
-  const d = new Date(); d.setHours(h, 0, 0, 0);
-  return d.toLocaleTimeString([], { hour: "numeric" });
+/* "Best hour by day" card.
+ * - Top row (highlighted): the user's $/hr for the current day-of-week + the
+ *   current hour-of-day, across all logged deliveries.
+ * - Below: 7 rows, one per day of week, each showing the single best
+ *   hour-of-day for that day. */
+function renderBestHoursByDay(log) {
+  const buckets = bucketizeByHour(log);
+
+  const now     = new Date();
+  const curDow  = now.getDay();
+  const curHour = now.getHours();
+
+  const nowBest = pickBest(buckets.filter(b => b.dow === curDow && b.hour === curHour));
+
+  const perDayBest = {};
+  DAY_DISPLAY_ORDER.forEach(dow => {
+    const best = pickBest(buckets.filter(b => b.dow === dow));
+    if (best) perDayBest[dow] = best;
+  });
+
+  const ul = document.getElementById("bestHours");
+  ul.innerHTML = "";
+
+  ul.appendChild(buildNowLi({
+    title: `Right now · ${DAY_SHORT[curDow]} ${fmtHour12(curHour)}`,
+    bucket: nowBest,
+    detailsForBucket: b => `${b.count} order${b.count===1?"":"s"} · $${b.earn.toFixed(0)} total`,
+    emptyMsg: "No data yet for this hour — log a few deliveries."
+  }));
+
+  DAY_DISPLAY_ORDER.forEach(dow => {
+    const o = perDayBest[dow];
+    const li = document.createElement("li");
+    if (o) {
+      li.innerHTML = `
+        <div>
+          <div class="name">${DAY_SHORT[dow]} · ${fmtHour12(o.hour)}</div>
+          <div class="sub">${o.count} order${o.count===1?"":"s"} · $${o.earn.toFixed(0)} total</div>
+        </div>
+        <div class="val">$${o.perHr.toFixed(0)} $/hr</div>
+      `;
+    } else {
+      li.innerHTML = `
+        <div>
+          <div class="name">${DAY_SHORT[dow]}</div>
+          <div class="sub muted">No data yet.</div>
+        </div>
+        <div class="val muted">—</div>
+      `;
+    }
+    ul.appendChild(li);
+  });
 }
 
+/* Build the highlighted "right now" <li> used at the top of bestZones /
+ * bestHours rank cards. */
+function buildNowLi({ title, bucket, detailsForBucket, emptyMsg }) {
+  const li = document.createElement("li");
+  li.className = "now";
+  if (bucket) {
+    li.innerHTML = `
+      <div>
+        <div class="name">${escapeHtml(title)}</div>
+        <div class="sub">${detailsForBucket(bucket)}</div>
+      </div>
+      <div class="val">$${bucket.perHr.toFixed(0)} $/hr</div>
+    `;
+  } else {
+    li.innerHTML = `
+      <div>
+        <div class="name">${escapeHtml(title)}</div>
+        <div class="sub muted">${escapeHtml(emptyMsg)}</div>
+      </div>
+      <div class="val muted">—</div>
+    `;
+  }
+  return li;
+}
+
+/* ---------- Generic restaurant aggregation (kept for best/worst restaurants) */
 function aggregate(log, key) {
   const map = {};
   log.forEach(e => {
