@@ -10,7 +10,7 @@
  * fresh version. This is what makes future deploys propagate automatically
  * without having to bump CACHE for every change.
  */
-const CACHE = "dartmouth-eats-v4";
+const CACHE = "dartmouth-eats-v5";
 const ASSETS = [
   "./",
   "./index.html",

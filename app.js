@@ -125,6 +125,20 @@ function fmtWindowRange(startH) {
 }
 
 /* ---------- Bucketing & ranking ---------- */
+
+/* Count distinct clock-hours (unique date + hour-of-day pairs) in a delivery
+ * list. This is THE definition of "hours worked" used everywhere $/hr is
+ * displayed. Example: a delivery at 6:45pm and another at 7:15pm same day
+ * = 2 distinct clock-hours, even though only ~30 minutes of driving happened. */
+function distinctClockHours(deliveries) {
+  const set = new Set();
+  deliveries.forEach(e => {
+    const d = new Date(e.ts);
+    set.add(`${d.toDateString()}|${d.getHours()}`);
+  });
+  return set.size;
+}
+
 /* Group deliveries into (day-of-week, time-window, zone) buckets and compute
  * earn / minutes / $/hr per bucket. */
 function bucketizeByZone(log) {
@@ -159,16 +173,21 @@ function bucketizeByHour(log) {
     const h = d.getHours();
     const key = `${dow}|${h}`;
     const o = buckets[key] || (buckets[key] = {
-      dow, hour: h, earn: 0, min: 0, count: 0
+      dow, hour: h, earn: 0, min: 0, count: 0, dates: new Set()
     });
     o.earn += (e.pay || 0) + (e.tip || 0);
     o.min  += e.min || 0;
     o.count++;
+    // Track which distinct dates contributed — so $/hr divides by the number
+    // of times the user has actually worked this dow+hour slot.
+    o.dates.add(d.toDateString());
   });
-  // $/hr = total earned in this 1-hour bucket ÷ 1 hour.
-  // Which is just the total earnings for that hour slot.
+  // $/hr = total earned in this bucket ÷ how many separate days it represents.
+  // E.g. earned $20 on one Friday 7pm and $30 on another Friday 7pm
+  //   → $50 / 2 days = $25/hr (the average Friday-7pm).
   Object.values(buckets).forEach(b => {
-    b.perHr = b.earn; // earn / 1 hour = earn
+    b.hours = b.dates.size;
+    b.perHr = b.hours > 0 ? b.earn / b.hours : 0;
   });
   return Object.values(buckets);
 }
@@ -493,14 +512,16 @@ function renderStats() {
   const range = document.getElementById("statRange").value;
   const log = filterByRange(loadLog(), range);
 
-  const totalEarn = log.reduce((s, e) => s + (e.pay + e.tip), 0);
-  const totalMin  = log.reduce((s, e) => s + e.min, 0);
-  const totalKm   = log.reduce((s, e) => s + e.km, 0);
+  const totalEarn  = log.reduce((s, e) => s + (e.pay + e.tip), 0);
+  const totalKm    = log.reduce((s, e) => s + e.km, 0);
+  // Real clock-hours worked = distinct (date, hour) pairs in the filtered log.
+  // Example: $20 at 6:30pm + $20 at 7:30pm same day → 2 hours → $20/hr.
+  const totalHours = distinctClockHours(log);
 
   document.getElementById("sCount").textContent = log.length;
   document.getElementById("sEarn").textContent  = "$" + totalEarn.toFixed(0);
   document.getElementById("sPerHr").textContent =
-    totalMin > 0 ? "$" + (totalEarn / (totalMin / 60)).toFixed(0) : "$0";
+    totalHours > 0 ? "$" + (totalEarn / totalHours).toFixed(0) : "$0";
   document.getElementById("sPerKm").textContent =
     totalKm > 0 ? "$" + (totalEarn / totalKm).toFixed(2) : "$0";
 
@@ -660,18 +681,26 @@ function aggregate(log, key) {
   const map = {};
   log.forEach(e => {
     const k = e[key] || "Unknown";
-    map[k] = map[k] || { name: k, earn: 0, min: 0, count: 0, km: 0 };
-    map[k].earn += e.pay + e.tip;
-    map[k].min  += e.min;
-    map[k].km   += e.km;
-    map[k].count++;
+    if (!map[k]) {
+      map[k] = { name: k, earn: 0, min: 0, count: 0, km: 0, hourSet: new Set() };
+    }
+    const o = map[k];
+    o.earn += e.pay + e.tip;
+    o.min  += e.min;
+    o.km   += e.km;
+    o.count++;
+    // Track distinct (date, hour) pairs so $/hr is real clock-hours, not
+    // extrapolated from delivery minutes.
+    const d = new Date(e.ts);
+    o.hourSet.add(`${d.toDateString()}|${d.getHours()}`);
   });
+  Object.values(map).forEach(o => { o.hours = o.hourSet.size; });
   return map;
 }
 
 function topByPerHr(map) {
   return Object.values(map)
-    .map(o => ({ ...o, perHr: o.min > 0 ? o.earn / (o.min / 60) : 0 }))
+    .map(o => ({ ...o, perHr: o.hours > 0 ? o.earn / o.hours : 0 }))
     .filter(o => o.count >= 1)
     .sort((a, b) => b.perHr - a.perHr)
     .slice(0, 5);
