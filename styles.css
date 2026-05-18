@@ -189,6 +189,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 .h-meta { color: var(--muted); font-size: 13px; }
 .h-pay { font-weight: 700; color: var(--good); text-align: right; }
 .h-rate { color: var(--muted); font-size: 13px; text-align: right; }
+.h-actions { display: flex; gap: 6px; margin-top: 6px; }
+.h-actions .btn { padding: 4px 10px; font-size: 12px; }
 
 /* Stats grid */
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
