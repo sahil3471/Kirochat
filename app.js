@@ -142,8 +142,10 @@ function bucketizeByZone(log) {
     o.min  += e.min || 0;
     o.count++;
   });
+  // $/hr = total earned in this bucket ÷ window size (2 hours).
+  // This gives the real average per clock-hour, not extrapolated.
   Object.values(buckets).forEach(b => {
-    b.perHr = b.min > 0 ? b.earn / (b.min / 60) : 0;
+    b.perHr = b.earn / WINDOW_SIZE_HOURS;
   });
   return Object.values(buckets);
 }
@@ -163,8 +165,10 @@ function bucketizeByHour(log) {
     o.min  += e.min || 0;
     o.count++;
   });
+  // $/hr = total earned in this 1-hour bucket ÷ 1 hour.
+  // Which is just the total earnings for that hour slot.
   Object.values(buckets).forEach(b => {
-    b.perHr = b.min > 0 ? b.earn / (b.min / 60) : 0;
+    b.perHr = b.earn; // earn / 1 hour = earn
   });
   return Object.values(buckets);
 }
@@ -390,25 +394,9 @@ function renderHistory() {
   ul.innerHTML = "";
   document.getElementById("historyCount").textContent = `${log.length} entries`;
 
-  // Compute a running cumulative $/hr per delivery.
-  // We walk oldest -> newest, accumulating earnings and minutes, so each entry
-  // shows the average $/hr up to and including itself (e.g. $40 across 2h = $20/hr).
-  // The list itself is rendered newest-first, so we look the value up by id.
-  const oldestFirst = log.slice().sort((a, b) =>
-    new Date(a.ts) - new Date(b.ts)
-  );
-  const cumPerHrById = {};
-  let cumEarn = 0, cumMin = 0;
-  oldestFirst.forEach(e => {
-    cumEarn += (e.pay || 0) + (e.tip || 0);
-    cumMin  += e.min || 0;
-    cumPerHrById[e.id] = cumMin > 0 ? cumEarn / (cumMin / 60) : 0;
-  });
-
   log.slice(0, 50).forEach(e => {
     const total = e.pay + e.tip;
     const perKm = e.km > 0 ? total / e.km : 0;
-    const cumPerHr = cumPerHrById[e.id] || 0;
     const li = document.createElement("li");
     li.dataset.id = e.id;
     li.innerHTML = `
@@ -422,7 +410,7 @@ function renderHistory() {
       </div>
       <div>
         <div class="h-pay">$${total.toFixed(2)}</div>
-        <div class="h-rate">$${perKm.toFixed(2)}/km · $${cumPerHr.toFixed(0)}/hr avg</div>
+        <div class="h-rate">$${perKm.toFixed(2)}/km</div>
       </div>
     `;
     ul.appendChild(li);
