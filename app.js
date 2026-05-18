@@ -301,7 +301,7 @@ function suggestedZone() {
   const z = cur.zone;
   if (/Burnside/i.test(z)) return "Burnside";
   if (/Crossing/i.test(z)) return "Dartmouth Crossing";
-  if (/Mic Mac|Tacoma/i.test(z)) return "Mic Mac / Tacoma Dr";
+  if (/Mic Mac|Tacoma/i.test(z)) return "Mic Mac";
   if (/Portland|Downtown Dartmouth|Alderney/i.test(z)) return "Downtown Dartmouth (Portland St)";
   if (/Cole Harbour/i.test(z)) return "Cole Harbour Rd";
   if (/Main St|Penhorn/i.test(z)) return "Main St / Penhorn";
@@ -389,10 +389,26 @@ function renderHistory() {
   const ul = document.getElementById("historyList");
   ul.innerHTML = "";
   document.getElementById("historyCount").textContent = `${log.length} entries`;
+
+  // Compute a running cumulative $/hr per delivery.
+  // We walk oldest -> newest, accumulating earnings and minutes, so each entry
+  // shows the average $/hr up to and including itself (e.g. $40 across 2h = $20/hr).
+  // The list itself is rendered newest-first, so we look the value up by id.
+  const oldestFirst = log.slice().sort((a, b) =>
+    new Date(a.ts) - new Date(b.ts)
+  );
+  const cumPerHrById = {};
+  let cumEarn = 0, cumMin = 0;
+  oldestFirst.forEach(e => {
+    cumEarn += (e.pay || 0) + (e.tip || 0);
+    cumMin  += e.min || 0;
+    cumPerHrById[e.id] = cumMin > 0 ? cumEarn / (cumMin / 60) : 0;
+  });
+
   log.slice(0, 50).forEach(e => {
     const total = e.pay + e.tip;
     const perKm = e.km > 0 ? total / e.km : 0;
-    const perHr = e.min > 0 ? total / (e.min / 60) : 0;
+    const cumPerHr = cumPerHrById[e.id] || 0;
     const li = document.createElement("li");
     li.dataset.id = e.id;
     li.innerHTML = `
@@ -406,7 +422,7 @@ function renderHistory() {
       </div>
       <div>
         <div class="h-pay">$${total.toFixed(2)}</div>
-        <div class="h-rate">$${perKm.toFixed(2)}/km · $${perHr.toFixed(0)}/hr</div>
+        <div class="h-rate">$${perKm.toFixed(2)}/km · $${cumPerHr.toFixed(0)}/hr avg</div>
       </div>
     `;
     ul.appendChild(li);
