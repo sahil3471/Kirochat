@@ -76,7 +76,7 @@ window.PLAYBOOK = [
     start: 18, end: 21, dow: null,
     zone: "Crossing → Mic Mac → Downtown Dartmouth rotation",
     why: "Peak dinner. Follow the heatmap — surge multipliers and Boost zones rotate every 15–20 min.",
-    detail: "Start at Dartmouth Crossing. If the heatmap shifts, drift to Mic Mac Mall / Tacoma Dr, then to Portland St / Alderney Landing. Don't sit in one spot if pings stall for >5 min — reposition. This is your highest-earning window of every day."
+    detail: "Start at Dartmouth Crossing. If the heatmap shifts, drift to Mic Mac Mall, then to Portland St / Alderney Landing. Don't sit in one spot if pings stall for >5 min — reposition. This is your highest-earning window of every day."
   },
 
   // ===== LATE DINNER WEEKEND (9pm-midnight) =====
@@ -106,7 +106,7 @@ window.TOP_WINDOWS = [
 window.ZONES = [
   "Burnside",
   "Dartmouth Crossing",
-  "Mic Mac / Tacoma Dr",
+  "Mic Mac",
   "Downtown Dartmouth (Portland St)",
   "Cole Harbour Rd",
   "Main St / Penhorn",
