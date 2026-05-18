@@ -2,6 +2,9 @@
 
 const STORAGE_KEY = "dartmouth_eats_log_v1";
 
+/* ID of the entry currently being edited (null = create-new mode) */
+let editingId = null;
+
 /* ---------- Storage ---------- */
 function loadLog() {
   try {
@@ -307,9 +310,7 @@ function suggestedZone() {
 
 document.getElementById("logForm").addEventListener("submit", e => {
   e.preventDefault();
-  const entry = {
-    id: Date.now(),
-    ts: new Date().toISOString(),
+  const formData = {
     zone: document.getElementById("fZone").value,
     restaurant: document.getElementById("fRestaurant").value.trim() || "Unknown",
     pay: parseFloat(document.getElementById("fPay").value) || 0,
@@ -321,12 +322,60 @@ document.getElementById("logForm").addEventListener("submit", e => {
     notes: document.getElementById("fNotes").value.trim()
   };
   const log = loadLog();
-  log.unshift(entry);
-  saveLog(log);
+
+  if (editingId !== null) {
+    // Update existing entry; preserve id and ts.
+    const idx = log.findIndex(x => x.id === editingId);
+    if (idx !== -1) {
+      log[idx] = { ...log[idx], ...formData };
+      saveLog(log);
+      toast("Updated");
+    }
+    exitEditMode();
+  } else {
+    // Create new entry.
+    const entry = {
+      id: Date.now(),
+      ts: new Date().toISOString(),
+      ...formData
+    };
+    log.unshift(entry);
+    saveLog(log);
+    toast("Saved");
+  }
+
   e.target.reset();
   document.getElementById("fZone").value = suggestedZone();
-  toast("Saved");
   renderHistory();
+});
+
+function enterEditMode(entry) {
+  editingId = entry.id;
+  document.getElementById("fZone").value = entry.zone;
+  document.getElementById("fRestaurant").value = entry.restaurant === "Unknown" ? "" : entry.restaurant;
+  document.getElementById("fPay").value = entry.pay;
+  document.getElementById("fTip").value = entry.tip || "";
+  document.getElementById("fKm").value = entry.km;
+  document.getElementById("fMin").value = entry.min;
+  document.getElementById("fWait").value = entry.wait || "";
+  document.getElementById("fApp").value = entry.app || "Uber Eats";
+  document.getElementById("fNotes").value = entry.notes || "";
+  document.getElementById("formSubmitBtn").textContent = "Update delivery";
+  document.getElementById("cancelEditBtn").hidden = false;
+  document.querySelector('.tab[data-tab="log"]').click();
+  document.getElementById("logForm").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function exitEditMode() {
+  editingId = null;
+  document.getElementById("formSubmitBtn").textContent = "Save delivery";
+  document.getElementById("cancelEditBtn").hidden = true;
+}
+
+document.getElementById("cancelEditBtn").addEventListener("click", () => {
+  document.getElementById("logForm").reset();
+  document.getElementById("fZone").value = suggestedZone();
+  exitEditMode();
 });
 
 document.getElementById("quickLogBtn").addEventListener("click", () => {
@@ -345,10 +394,15 @@ function renderHistory() {
     const perKm = e.km > 0 ? total / e.km : 0;
     const perHr = e.min > 0 ? total / (e.min / 60) : 0;
     const li = document.createElement("li");
+    li.dataset.id = e.id;
     li.innerHTML = `
       <div>
         <div class="h-rest">${escapeHtml(e.restaurant)}</div>
         <div class="h-meta">${escapeHtml(e.zone)} · ${e.min}min · ${e.km}km · ${new Date(e.ts).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}</div>
+        <div class="h-actions">
+          <button type="button" class="btn small h-edit" data-action="edit">Edit</button>
+          <button type="button" class="btn danger small h-delete" data-action="delete">Delete</button>
+        </div>
       </div>
       <div>
         <div class="h-pay">$${total.toFixed(2)}</div>
@@ -358,6 +412,35 @@ function renderHistory() {
     ul.appendChild(li);
   });
 }
+
+document.getElementById("historyList").addEventListener("click", ev => {
+  const btn = ev.target.closest("button[data-action]");
+  if (!btn) return;
+  const li = btn.closest("li[data-id]");
+  if (!li) return;
+  const id = Number(li.dataset.id);
+  const log = loadLog();
+  const entry = log.find(x => x.id === id);
+  if (!entry) return;
+
+  if (btn.dataset.action === "edit") {
+    enterEditMode(entry);
+  } else if (btn.dataset.action === "delete") {
+    const label = entry.restaurant && entry.restaurant !== "Unknown" ? entry.restaurant : "this delivery";
+    if (confirm(`Delete ${label}? This can't be undone.`)) {
+      const next = log.filter(x => x.id !== id);
+      saveLog(next);
+      // If we were editing this entry, exit edit mode.
+      if (editingId === id) {
+        document.getElementById("logForm").reset();
+        document.getElementById("fZone").value = suggestedZone();
+        exitEditMode();
+      }
+      renderHistory();
+      toast("Deleted");
+    }
+  }
+});
 
 document.getElementById("clearBtn").addEventListener("click", () => {
   if (confirm("Delete ALL logged deliveries? This can't be undone.")) {
