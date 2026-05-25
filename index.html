@@ -147,11 +147,33 @@
       <ul id="bestZones" class="rank"></ul>
     </div>
     <div class="card">
-      <div class="section-title">Best restaurants ($/hr)</div>
+      <div class="section-title" id="bestRestTitle">Best restaurants</div>
+      <div class="form-row">
+        <label>History
+          <select id="bestRestRange">
+            <option value="2">Last 2</option>
+            <option value="4" selected>Last 4</option>
+            <option value="8">Last 8</option>
+            <option value="13">Last 13</option>
+            <option value="all">All time</option>
+          </select>
+        </label>
+      </div>
       <ul id="bestRestaurants" class="rank"></ul>
     </div>
     <div class="card">
-      <div class="section-title">Worst restaurants (avoid)</div>
+      <div class="section-title" id="worstRestTitle">Worst restaurants</div>
+      <div class="form-row">
+        <label>History
+          <select id="worstRestRange">
+            <option value="2">Last 2</option>
+            <option value="4" selected>Last 4</option>
+            <option value="8">Last 8</option>
+            <option value="13">Last 13</option>
+            <option value="all">All time</option>
+          </select>
+        </label>
+      </div>
       <ul id="worstRestaurants" class="rank"></ul>
     </div>
     <div class="card">
