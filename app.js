@@ -528,12 +528,11 @@ function renderStats() {
   // Best zones — "right now" highlight + per-day breakdown.
   renderBestZonesByDay(log);
 
-  // Best restaurants / worst restaurants stay aggregated overall.
-  const byRest = aggregate(log, "restaurant");
-  renderRank("bestRestaurants", topByPerHr(byRest), "$/hr");
-  renderRank("worstRestaurants",
-    topByPerHr(byRest).filter(r => r.count >= 2).slice().reverse().slice(0, 5),
-    "$/hr");
+  // Best/worst restaurants — slice is "same weekday as today, same 2h window
+  // as right now, within last N of that weekday". Each card has its own
+  // dropdown for N. The top-of-Stats range filter does NOT apply here.
+  renderRestaurantsForSlot("best");
+  renderRestaurantsForSlot("worst");
 
   // Best hour by day — "right now" highlight + per-day breakdown.
   renderBestHoursByDay(log);
@@ -706,6 +705,107 @@ function topByPerHr(map) {
     .slice(0, 5);
 }
 
+/* ---------- Best/worst restaurants for current weekday + 2h block ---------- */
+
+/* Cutoff timestamp for "include only the last N occurrences of today's
+ * weekday, counting today as the 1st". lastN === "all" → no cutoff.
+ * Example: today is Mon, lastN = 4 → cutoff is start-of-day 3 weeks ago. */
+function cutoffForLastNWeekdays(lastN) {
+  if (lastN === "all") return -Infinity;
+  const n = parseInt(lastN, 10);
+  if (!n || n < 1) return -Infinity;
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - (n - 1) * 7);
+  return d.getTime();
+}
+
+/* Filter the log to entries that:
+ *   1. fall on today's weekday (e.g. only Mondays if today is Mon),
+ *   2. fall inside the current fixed 2-hour block (0-2, 2-4, ... 22-24,
+ *      determined by Math.floor(currentHour / 2) * 2),
+ *   3. are within the last N occurrences of that weekday (or all-time). */
+function filterByWeekdayAndBlock(log, lastN) {
+  const now = new Date();
+  const weekday = now.getDay();
+  const blockStart = windowStartFor(now.getHours());
+  const blockEnd = blockStart + WINDOW_SIZE_HOURS;
+  const cutoff = cutoffForLastNWeekdays(lastN);
+  return log.filter(e => {
+    const d = new Date(e.ts);
+    if (d.getTime() < cutoff) return false;
+    if (d.getDay() !== weekday) return false;
+    const h = d.getHours();
+    return h >= blockStart && h < blockEnd;
+  });
+}
+
+/* Render the Best (or Worst) restaurants card.
+ * Slice = today's weekday + current 2h block + last N (from this card's own
+ * dropdown). Best = top 5 by total earnings. Worst = bottom 5 by total
+ * earnings, with count>=2 to avoid one-off bad luck dominating. */
+function renderRestaurantsForSlot(mode) {
+  const isBest    = mode === "best";
+  const selId     = isBest ? "bestRestRange"   : "worstRestRange";
+  const ulId      = isBest ? "bestRestaurants" : "worstRestaurants";
+  const titleId   = isBest ? "bestRestTitle"   : "worstRestTitle";
+  const sel       = document.getElementById(selId);
+  const lastN     = sel ? sel.value : "4";
+
+  const slice = filterByWeekdayAndBlock(loadLog(), lastN);
+  const map   = aggregate(slice, "restaurant");
+
+  // Title shows the active slice so it's obvious what's being ranked.
+  const now    = new Date();
+  const dayStr = DAY_SHORT[now.getDay()];
+  const winStr = fmtWindowRange(windowStartFor(now.getHours()));
+  const scope  = lastN === "all"
+    ? `all-time ${DAY_FULL[now.getDay()]}s`
+    : `last ${lastN} ${DAY_FULL[now.getDay()]}${parseInt(lastN, 10) === 1 ? "" : "s"}`;
+  const titleEl = document.getElementById(titleId);
+  if (titleEl) {
+    titleEl.textContent = `${isBest ? "Best" : "Worst"} restaurants · ${dayStr} ${winStr} · ${scope}`;
+  }
+
+  // Rank by total $ earned in this slice (not $/hr).
+  let ranked = Object.values(map).map(o => ({
+    ...o,
+    perHr: o.hours > 0 ? o.earn / o.hours : 0
+  }));
+  if (isBest) {
+    ranked = ranked.sort((a, b) => b.earn - a.earn).slice(0, 5);
+  } else {
+    // Drop one-off restaurants so a single bad order doesn't dominate.
+    ranked = ranked
+      .filter(r => r.count >= 2)
+      .sort((a, b) => a.earn - b.earn)
+      .slice(0, 5);
+  }
+  renderRankByEarn(ulId, ranked);
+}
+
+/* Like renderRank, but the headline number is total $ earned in the slice
+ * and the subtitle shows order count + $/hr context. */
+function renderRankByEarn(elId, items) {
+  const ul = document.getElementById(elId);
+  ul.innerHTML = "";
+  if (!items.length) {
+    ul.innerHTML = `<li class="muted small">No history yet for this slot — log a few deliveries.</li>`;
+    return;
+  }
+  items.forEach(o => {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <div>
+        <div class="name">${escapeHtml(o.name)}</div>
+        <div class="sub">${o.count} order${o.count===1?"":"s"} · $${o.perHr.toFixed(0)}/hr</div>
+      </div>
+      <div class="val">$${o.earn.toFixed(0)}</div>
+    `;
+    ul.appendChild(li);
+  });
+}
+
 function renderRank(elId, items, unit) {
   const ul = document.getElementById(elId);
   ul.innerHTML = "";
@@ -727,6 +827,8 @@ function renderRank(elId, items, unit) {
 }
 
 document.getElementById("statRange").addEventListener("change", renderStats);
+document.getElementById("bestRestRange").addEventListener("change", () => renderRestaurantsForSlot("best"));
+document.getElementById("worstRestRange").addEventListener("change", () => renderRestaurantsForSlot("worst"));
 
 /* ---------- Toast & helpers ---------- */
 function toast(msg) {
@@ -747,9 +849,15 @@ function escapeHtml(s) {
 populateZoneOptions();
 renderNow();
 renderHistory();
-// Tick the clock every 30s
+// Tick the clock every 30s. Also re-render the best/worst restaurant cards
+// while the Stats tab is open so they auto-roll when the clock crosses into
+// the next 2h block (e.g. 3:59 → 4:00 pm flips from the 2-4 slice to 4-6).
 setInterval(() => {
   if (document.getElementById("tab-now").classList.contains("active")) renderNow();
+  if (document.getElementById("tab-stats").classList.contains("active")) {
+    renderRestaurantsForSlot("best");
+    renderRestaurantsForSlot("worst");
+  }
 }, 30000);
 
 /* ---------- Service worker registration (PWA install) ---------- */
